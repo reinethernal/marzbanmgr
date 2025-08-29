@@ -495,6 +495,7 @@ HTML
   )
   info "Шаблоны установлены → $TDIR"
   compose_up_relaxed
+  ensure_api_up
   pair="$(get_token_with_admin)" || echo "Внимание: токен не получен — пропуск POST /api/template"
   if [ -n "${pair:-}" ]; then
     CURL_CMD="${pair%%|*}"; tmp="${pair#*|}"; BASE="${tmp%%|*}"; AUTH="${tmp#*|}"
@@ -504,6 +505,41 @@ HTML
       info "шаблоны уже существуют (409)"
     elif [ "$HTTP" -lt 200 ] || [ "$HTTP" -ge 300 ]; then
       echo "Внимание: POST /api/template → HTTP $HTTP"
+    fi
+
+    VLESS_PORT="$(getv_file "$ENV_VARS_PATH" VLESS_PORT)"; VLESS_PORT="${VLESS_PORT//[!0-9]/}"
+    VMESS_PORT="$(getv_file "$ENV_VARS_PATH" VMESS_PORT)"; VMESS_PORT="${VMESS_PORT//[!0-9]/}"
+    TROJAN_PORT="$(getv_file "$ENV_VARS_PATH" TROJAN_PORT)"; TROJAN_PORT="${TROJAN_PORT//[!0-9]/}"
+    SS2022_PORT="$(getv_file "$ENV_VARS_PATH" SS2022_PORT 2>/dev/null || true)"; SS2022_PORT="${SS2022_PORT//[!0-9]/}"
+    SS_AEAD_PORT="$(getv_file "$ENV_VARS_PATH" SS_AEAD_PORT 2>/dev/null || true)"; SS_AEAD_PORT="${SS_AEAD_PORT//[!0-9]/}"
+
+    templates=()
+    [ -n "$VLESS_PORT" ] && templates+=("VLESS TCP (auto)|vless")
+    [ -n "$VMESS_PORT" ] && templates+=("VMESS TCP (auto)|vmess")
+    [ -n "$TROJAN_PORT" ] && templates+=("TROJAN TCP (auto)|trojan")
+    [ -n "$SS2022_PORT" ] && templates+=("SS2022 TCP/UDP (auto)|shadowsocks")
+    [ -n "$SS_AEAD_PORT" ] && templates+=("SS AEAD 2018 TCP/UDP (auto)|shadowsocks")
+
+    endpoint=""
+    for ep in /api/user-template /api/template/user; do
+      HTTP=$($CURL_CMD -o /tmp/check_ep.log -w '%{http_code}' -H "$AUTH" "$BASE$ep" 2>/dev/null || true)
+      [ "$HTTP" != "404" ] && { endpoint="$ep"; break; }
+    done
+    if [ -n "$endpoint" ]; then
+      for item in "${templates[@]}"; do
+        tag="${item%%|*}"; proto="${item#*|}"
+        JSON_USER=$(jq -n --arg name "${tag} template" --arg tag "$tag" --arg proto "$proto" '{name:$name,inbounds:{($proto):[$tag]},data_limit:0,expire_duration:0}')
+        HTTP=$($CURL_CMD -sS -o /tmp/post_user_template.log -w '%{http_code}' -H "$AUTH" -H 'Content-Type: application/json' --data "$JSON_USER" "$BASE$endpoint" 2>/dev/null || true)
+        if [ "$HTTP" = "409" ]; then
+          info "$tag template уже существует (409)"
+        elif [ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 300 ]; then
+          info "$tag template создан"
+        else
+          echo "Внимание: POST $endpoint ($tag) → HTTP $HTTP"
+        fi
+      done
+    else
+      echo "Внимание: endpoint user-template не найден"
     fi
   fi
   local DOMAIN URL CODE
