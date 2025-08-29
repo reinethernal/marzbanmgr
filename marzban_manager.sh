@@ -12,9 +12,19 @@
 
 set -Eeuo pipefail
 
-die(){ echo "Ошибка: $*" >&2; exit 1; }
+die(){
+  trap - ERR
+  if command -v dialog >/dev/null 2>&1; then
+    dialog --msgbox "Ошибка: $*" 10 60 >&2
+  else
+    echo "Ошибка: $*" >&2
+  fi
+  exit 1
+}
 info(){ echo "==> $*"; }
 have(){ command -v "$1" >/dev/null 2>&1; }
+
+trap 'die "Неожиданная ошибка на строке $LINENO"' ERR
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; cd "$BASE_DIR"
 ENV_VARS_PATH="${ENV_VARS_PATH:-${1:-./env.vars}}"
@@ -253,44 +263,52 @@ api_get_node_cert(){
 
 # ---------- 1) Установить/переустановить ----------
 step1_install(){
-  info "Установка/переустановка Marzban"
+  exec 3> >(dialog --gauge "Установка/переустановка Marzban" 10 70 0)
+  echo 0 >&3
   ensure_cmd bash bash; ensure_cmd curl curl; ensure_cmd jq jq; ensure_cmd sed sed; ensure_cmd grep grep
   ensure_cmd docker docker.io docker-ce
   docker compose version >/dev/null 2>&1 || ensure_cmd docker-compose docker-compose-plugin docker-compose
+  echo 20 >&3
 
   if [ -d "$COMPOSE_DIR" ] || docker ps -a --format '{{.Names}}' | grep -q '^marzban-'; then
-    info "Обнаружена существующая установка — удаляю"
     (cd "$COMPOSE_DIR" 2>/dev/null && docker compose down -v --remove-orphans) || true
     docker rm -f marzban-marzban-1 marzban-caddy-1 2>/dev/null || true
     docker network prune -f >/dev/null 2>&1 || true
     docker volume ls -q | grep -E '^marzban' | xargs -r docker volume rm >/dev/null 2>&1 || true
     rm -rf /var/lib/marzban /var/lib/marzban-node "$COMPOSE_DIR" 2>/dev/null || true
   fi
+  echo 40 >&3
 
   INSTALL_SH="/usr/local/bin/marzban-installer.sh"
   curl -fsSL "https://raw.githubusercontent.com/Gozargah/Marzban-scripts/master/marzban.sh" -o "$INSTALL_SH"
   chmod +x "$INSTALL_SH"
+  echo 60 >&3
 
   LOG="/tmp/marzban_install.$(date +%s).log"
-  info "Запуск инсталлятора в фоне, лог: $LOG"
   nohup /usr/bin/env bash "$INSTALL_SH" install >>"$LOG" 2>&1 & pid=$!
+  echo 70 >&3
 
   t=0; while [ $t -lt 240 ]; do [ -f "$ENV_FILE" ] && break; sleep 2; t=$((t+2)); done
   [ -f "$ENV_FILE" ] || { tail -n 100 "$LOG" 2>/dev/null || true; die "После установки нет $ENV_FILE"; }
+  echo 90 >&3
 
   (cd "$COMPOSE_DIR" && docker compose down --remove-orphans) >/dev/null 2>&1 || true
 
   if ps -p "$pid" >/dev/null 2>&1; then kill "$pid" 2>/dev/null || true; sleep 1; ps -p "$pid" >/dev/null 2>&1 && kill -9 "$pid" 2>/dev/null || true; fi
-  info "Установка завершена (файлы получены, контейнеры остановлены)"
+  echo 100 >&3
+  exec 3>&-
+  dialog --msgbox "Установка завершена (файлы получены, контейнеры остановлены)" 10 60
 }
 
 # ---------- 2) Применить env.vars ----------
 step2_apply_env(){
-  info "Применение env.vars → $ENV_FILE"
+  exec 3> >(dialog --gauge "Применение env.vars → $ENV_FILE" 10 70 0)
+  echo 0 >&3
   [ -f "$ENV_VARS_PATH" ] || die "нет $ENV_VARS_PATH"
   [ -f "$ENV_FILE" ] || die "нет $ENV_FILE (сначала пункт 1)"
   normalize_file "$ENV_VARS_PATH"; normalize_file "$ENV_FILE"
   cp -a "$ENV_FILE" "$ENV_FILE.$(date +%Y%m%d-%H%M%S).bak"
+  echo 40 >&3
   while IFS= read -r raw || [ -n "$raw" ]; do
     raw="$(printf '%s' "$raw" | sed 's/\r$//')"; case "$raw" in ''|'#'*) continue ;; esac
     raw="${raw#export }"; k="${raw%%=*}"; v="${raw#*=}"
@@ -301,9 +319,12 @@ step2_apply_env(){
     else v="$(printf '%s' "$v" | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//')"; fi
     set_kv_force "$ENV_FILE" "$k" "$v"
   done < "$ENV_VARS_PATH"
-  info "env.vars применён"
+  echo 70 >&3
   configure_stack_from_env
   compose_up_relaxed
+  echo 100 >&3
+  exec 3>&-
+  dialog --msgbox "env.vars применён" 8 60
 }
 
 # ---------- 3) Добавить inbound’ы ----------
@@ -488,25 +509,25 @@ step7_add_node(){
 
   # ---- Интерактивный ввод SSH-параметров ----
   if ! SSH_HOST=$(dialog --clear --stdout --inputbox "SSH хост (IP/домен узла):" 8 60); then
-    info "Отменено"
+    dialog --msgbox "Отменено" 6 40
     return 0
   fi
   [ -n "$SSH_HOST" ] || die "SSH хост обязателен"
 
   if ! SSH_USER=$(dialog --clear --stdout --inputbox "SSH пользователь:" 8 60 "root"); then
-    info "Отменено"
+    dialog --msgbox "Отменено" 6 40
     return 0
   fi
 
   if ! SSH_PORT=$(dialog --clear --stdout --inputbox "SSH порт:" 8 60 "22"); then
-    info "Отменено"
+    dialog --msgbox "Отменено" 6 40
     return 0
   fi
 
   if ! AUTH_CHOICE=$(dialog --clear --stdout --menu "Метод аутентификации:" 15 50 2 \
     1 "Пароль" \
     2 "Приватный ключ"); then
-    info "Отменено"
+    dialog --msgbox "Отменено" 6 40
     return 0
   fi
   AUTH_CHOICE="${AUTH_CHOICE:-1}"
@@ -514,7 +535,7 @@ step7_add_node(){
   SSH_KEY=""; SSH_PASS=""
   if [ "$AUTH_CHOICE" = "2" ]; then
     if ! SSH_KEY=$(dialog --clear --stdout --inputbox "Путь к приватному ключу:" 8 60 "/root/.ssh/id_rsa"); then
-      info "Отменено"
+      dialog --msgbox "Отменено" 6 40
       return 0
     fi
     [ -f "$SSH_KEY" ] || die "Нет файла ключа: $SSH_KEY"
@@ -522,7 +543,7 @@ step7_add_node(){
   else
     ensure_cmd sshpass sshpass sshpass
     if ! SSH_PASS=$(dialog --clear --stdout --passwordbox "SSH пароль:" 8 60); then
-      info "Отменено"
+      dialog --msgbox "Отменено" 6 40
       return 0
     fi
     [ -n "$SSH_PASS" ] || die "Пустой пароль недопустим"
@@ -530,29 +551,29 @@ step7_add_node(){
 
   # ---- Интерактивные параметры узла ----
   if ! NAME=$(dialog --clear --stdout --inputbox "Имя узла:" 8 60 "node-${SSH_HOST}"); then
-    info "Отменено"
+    dialog --msgbox "Отменено" 6 40
     return 0
   fi
 
   if ! ADDRESS=$(dialog --clear --stdout --inputbox "Адрес узла (IP/домен):" 8 60 "${SSH_HOST}"); then
-    info "Отменено"
+    dialog --msgbox "Отменено" 6 40
     return 0
   fi
 
   if ! PORT=$(dialog --clear --stdout --inputbox "SERVICE_PORT:" 8 60 "62050"); then
-    info "Отменено"
+    dialog --msgbox "Отменено" 6 40
     return 0
   fi
 
   if ! API_PORT=$(dialog --clear --stdout --inputbox "XRAY_API_PORT:" 8 60 "62051"); then
-    info "Отменено"
+    dialog --msgbox "Отменено" 6 40
     return 0
   fi
 
   if ! PROTO=$(dialog --clear --stdout --menu "SERVICE_PROTOCOL:" 12 50 2 \
     rest "rest" \
     rpyc "rpyc"); then
-    info "Отменено"
+    dialog --msgbox "Отменено" 6 40
     return 0
   fi
   PROTO="${PROTO:-rest}"
@@ -560,23 +581,25 @@ step7_add_node(){
   if ! ADDH_CHOICE=$(dialog --clear --stdout --menu "Добавлять адрес узла во все инбаунды как host?" 12 60 2 \
     Y "Да" \
     N "Нет"); then
-    info "Отменено"
+    dialog --msgbox "Отменено" 6 40
     return 0
   fi
   case "$ADDH_CHOICE" in N) ADDHOST=false ;; *) ADDHOST=true ;; esac
 
   if ! COEF=$(dialog --clear --stdout --inputbox "usage_coefficient:" 8 60 "1"); then
-    info "Отменено"
+    dialog --msgbox "Отменено" 6 40
     return 0
   fi
 
+  exec 3> >(dialog --gauge "Развёртывание ноды" 10 70 0)
+  echo 0 >&3
   # 1) Получаем PEM панели через API
   local PEM_PATH
   if ! PEM_PATH="$(api_get_node_cert)"; then
-    echo "Не удалось получить PEM от панели через /api/node/settings. Проверьте доступность API и SUDO_*."
-    return 1
+    exec 3>&-
+    die "Не удалось получить PEM от панели через /api/node/settings. Проверьте доступность API и SUDO_*"
   fi
-  info "PEM панели получен: $PEM_PATH"
+  echo 25 >&3
 
   # 2) Регистрируем ноду в панели
   local triple CURL_CMD BASE AUTH HTTP
@@ -589,14 +612,15 @@ JSON
 
   HTTP=$($CURL_CMD -o /tmp/node.out -w "%{http_code}" -X POST -H "$AUTH" -H "Content-Type: application/json" \
     --data-binary @/tmp/node.json "$BASE/api/node" 2>/dev/null || true)
-  if [ "$HTTP" = "200" ] || [ "$HTTP" = "409" ]; then
-    info "Нода зарегистрирована в панели (HTTP $HTTP)"
-  else
-    cat /tmp/node.out; die "POST /api/node (HTTP $HTTP)"
+  if [ "$HTTP" != "200" ] && [ "$HTTP" != "409" ]; then
+    exec 3>&-
+    cat /tmp/node.out
+    die "POST /api/node (HTTP $HTTP)"
   fi
+  echo 50 >&3
 
   # 3) Копирование PEM и деплой node (ВНИМАНИЕ: для scp порт -P, для ssh порт -p)
-  info "Развёртываю Marzban-node на ${SSH_USER}@${SSH_HOST} и загружаю PEM…"
+  echo 75 >&3
 
   if [ -n "$SSH_KEY" ]; then
     ssh -p "$SSH_PORT" -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -659,6 +683,7 @@ EOF
       "${SSH_USER}@${SSH_HOST}" 'bash -s' >/dev/null
   fi
 
+  echo 90 >&3
   echo "---- Проверка узла (docker ps) ----"
   if [ -n "$SSH_KEY" ]; then
     ssh -p "$SSH_PORT" -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -676,7 +701,9 @@ EOF
       "${SSH_USER}@${SSH_HOST}" "ss -tpln 2>/dev/null | grep -E ':(^|.*)(${PORT}|${API_PORT})(\\b|:)' || true" || true
   fi
 
-  info "Узел развернут, PEM загружен автоматически."
+  echo 100 >&3
+  exec 3>&-
+  dialog --msgbox "Узел развернут, PEM загружен автоматически." 8 60
 }
 
 # ---------- Меню ----------
