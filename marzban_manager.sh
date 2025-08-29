@@ -463,6 +463,16 @@ HTML
 HTML
   info "Шаблоны установлены → $TDIR"
   compose_up_relaxed
+  local DOMAIN URL CODE
+  DOMAIN="$(getv DOMAIN)"
+  if [ -n "$DOMAIN" ]; then
+    ensure_cmd curl curl
+    URL="${DOMAIN}/sub/"
+    CODE=$(curl -sS -I -o /dev/null -w '%{http_code}' "$URL" 2>/dev/null || true)
+    if [ "$CODE" -lt 200 ] || [ "$CODE" -ge 400 ]; then
+      echo "Внимание: curl -I $URL → HTTP $CODE"
+    fi
+  fi
 }
 
 # ---------- 5) Пересоздать стек ----------
