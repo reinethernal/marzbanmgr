@@ -471,59 +471,94 @@ step7_add_node(){
   ensure_cmd ssh openssh-client ssh
   ensure_cmd scp openssh-client scp
   ensure_cmd jq jq
+  ensure_cmd dialog dialog
 
   [ -f "$ENV_FILE" ] || die "нет $ENV_FILE (сначала 1 и 2)"
   ensure_api_up
 
   # ---- Интерактивный ввод SSH-параметров ----
-  read -r -p "SSH хост (IP/домен узла): " SSH_HOST
+  if ! SSH_HOST=$(dialog --clear --stdout --inputbox "SSH хост (IP/домен узла):" 8 60); then
+    info "Отменено"
+    return 0
+  fi
   [ -n "$SSH_HOST" ] || die "SSH хост обязателен"
 
-  read -r -p "SSH пользователь [root]: " SSH_USER_INP
-  SSH_USER="${SSH_USER_INP:-root}"
+  if ! SSH_USER=$(dialog --clear --stdout --inputbox "SSH пользователь:" 8 60 "root"); then
+    info "Отменено"
+    return 0
+  fi
 
-  read -r -p "SSH порт [22]: " SSH_PORT_INP
-  SSH_PORT="${SSH_PORT_INP:-22}"
+  if ! SSH_PORT=$(dialog --clear --stdout --inputbox "SSH порт:" 8 60 "22"); then
+    info "Отменено"
+    return 0
+  fi
 
-  echo "Метод аутентификации:"
-  echo "  1) Пароль"
-  echo "  2) Приватный ключ"
-  read -r -p "Выбор [1/2]: " AUTH_CHOICE
+  if ! AUTH_CHOICE=$(dialog --clear --stdout --menu "Метод аутентификации:" 15 50 2 \
+    1 "Пароль" \
+    2 "Приватный ключ"); then
+    info "Отменено"
+    return 0
+  fi
   AUTH_CHOICE="${AUTH_CHOICE:-1}"
 
   SSH_KEY=""; SSH_PASS=""
   if [ "$AUTH_CHOICE" = "2" ]; then
-    read -r -p "Путь к приватному ключу [/root/.ssh/id_rsa]: " SSH_KEY_INP
-    SSH_KEY="${SSH_KEY_INP:-/root/.ssh/id_rsa}"
+    if ! SSH_KEY=$(dialog --clear --stdout --inputbox "Путь к приватному ключу:" 8 60 "/root/.ssh/id_rsa"); then
+      info "Отменено"
+      return 0
+    fi
     [ -f "$SSH_KEY" ] || die "Нет файла ключа: $SSH_KEY"
     chmod 600 "$SSH_KEY" || true
   else
     ensure_cmd sshpass sshpass sshpass
-    read -rs -p "SSH пароль: " SSH_PASS; echo
+    if ! SSH_PASS=$(dialog --clear --stdout --passwordbox "SSH пароль:" 8 60); then
+      info "Отменено"
+      return 0
+    fi
     [ -n "$SSH_PASS" ] || die "Пустой пароль недопустим"
   fi
 
   # ---- Интерактивные параметры узла ----
-  read -r -p "Имя узла [node-${SSH_HOST}]: " NAME_INP
-  NAME="${NAME_INP:-node-${SSH_HOST}}"
+  if ! NAME=$(dialog --clear --stdout --inputbox "Имя узла:" 8 60 "node-${SSH_HOST}"); then
+    info "Отменено"
+    return 0
+  fi
 
-  read -r -p "Адрес узла (IP/домен) [${SSH_HOST}]: " ADDRESS_INP
-  ADDRESS="${ADDRESS_INP:-${SSH_HOST}}"
+  if ! ADDRESS=$(dialog --clear --stdout --inputbox "Адрес узла (IP/домен):" 8 60 "${SSH_HOST}"); then
+    info "Отменено"
+    return 0
+  fi
 
-  read -r -p "SERVICE_PORT [62050]: " PORT_INP
-  PORT="${PORT_INP:-62050}"
+  if ! PORT=$(dialog --clear --stdout --inputbox "SERVICE_PORT:" 8 60 "62050"); then
+    info "Отменено"
+    return 0
+  fi
 
-  read -r -p "XRAY_API_PORT [62051]: " API_PORT_INP
-  API_PORT="${API_PORT_INP:-62051}"
+  if ! API_PORT=$(dialog --clear --stdout --inputbox "XRAY_API_PORT:" 8 60 "62051"); then
+    info "Отменено"
+    return 0
+  fi
 
-  read -r -p "SERVICE_PROTOCOL (rest|rpyc) [rest]: " PROTO_INP
-  PROTO="${PROTO_INP:-rest}"
+  if ! PROTO=$(dialog --clear --stdout --menu "SERVICE_PROTOCOL:" 12 50 2 \
+    rest "rest" \
+    rpyc "rpyc"); then
+    info "Отменено"
+    return 0
+  fi
+  PROTO="${PROTO:-rest}"
 
-  read -r -p "Добавлять адрес узла во все инбаунды как host? (Y/n) [Y]: " ADDH_INP
-  case "${ADDH_INP:-Y}" in n|N) ADDHOST=false ;; *) ADDHOST=true ;; esac
+  if ! ADDH_CHOICE=$(dialog --clear --stdout --menu "Добавлять адрес узла во все инбаунды как host?" 12 60 2 \
+    Y "Да" \
+    N "Нет"); then
+    info "Отменено"
+    return 0
+  fi
+  case "$ADDH_CHOICE" in N) ADDHOST=false ;; *) ADDHOST=true ;; esac
 
-  read -r -p "usage_coefficient [1]: " COEF_INP
-  COEF="${COEF_INP:-1}"
+  if ! COEF=$(dialog --clear --stdout --inputbox "usage_coefficient:" 8 60 "1"); then
+    info "Отменено"
+    return 0
+  fi
 
   # 1) Получаем PEM панели через API
   local PEM_PATH
