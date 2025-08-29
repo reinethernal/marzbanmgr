@@ -328,8 +328,11 @@ step2_apply_env(){
 }
 
 # ---------- 3) Добавить inbound’ы ----------
+
+# Переопределённая версия с указанием адреса и логированием протоколов
 step4_add_inbounds(){
-  info "Добавление inbound’ов (только объявленные)"
+  local LISTEN_ADDR="${1:-0.0.0.0}"
+  info "Добавление inbound’ов (только объявленные) для ${LISTEN_ADDR}"
   ensure_cmd jq jq
   [ -f "$ENV_FILE" ] || die "нет $ENV_FILE (сначала 1 и 2)"
   normalize_file "$ENV_VARS_PATH"
@@ -354,55 +357,67 @@ step4_add_inbounds(){
   have_in(){ local p="$1" port="$2"; jq --arg p "$p" --argjson port "${port:-0}" \
     '[.inbounds[]? | select(.protocol==$p and (.port==$port))] | length' /tmp/core.json; }
 
+  configured=()
+
   add_vless_tcp(){ local port="$1"; [ -n "$port" ] || return 0
     [ "$(have_in "vless" "$port")" -gt 0 ] && return 0
-    jq --argjson port "$port" '
+    jq --argjson port "$port" --arg listen "$LISTEN_ADDR" '
       .inbounds += [ {
-        tag: "VLESS TCP (auto)", listen: "0.0.0.0", port: $port, protocol: "vless",
+        tag: "VLESS TCP (auto)", listen: $listen, port: $port, protocol: "vless",
         settings: { clients: [], decryption: "none" },
         streamSettings: { network: "tcp" },
         sniffing: { enabled: true, destOverride: ["http","tls","quic"] }
-      } ]' /tmp/core.json > /tmp/core.json.new && mv /tmp/core.json.new /tmp/core.json; }
+      } ]' /tmp/core.json > /tmp/core.json.new && mv /tmp/core.json.new /tmp/core.json
+    configured+=("VLESS:$port")
+  }
 
   add_vmess_tcp(){ local port="$1"; [ -n "$port" ] || return 0
     [ "$(have_in "vmess" "$port")" -gt 0 ] && return 0
-    jq --argjson port "$port" '
+    jq --argjson port "$port" --arg listen "$LISTEN_ADDR" '
       .inbounds += [ {
-        tag: "VMESS TCP (auto)", listen: "0.0.0.0", port: $port, protocol: "vmess",
+        tag: "VMESS TCP (auto)", listen: $listen, port: $port, protocol: "vmess",
         settings: { clients: [] },
         streamSettings: { network: "tcp" },
         sniffing: { enabled: true, destOverride: ["http","tls","quic"] }
-      } ]' /tmp/core.json > /tmp/core.json.new && mv /tmp/core.json.new /tmp/core.json; }
+      } ]' /tmp/core.json > /tmp/core.json.new && mv /tmp/core.json.new /tmp/core.json
+    configured+=("VMESS:$port")
+  }
 
   add_trojan_tcp(){ local port="$1"; [ -n "$port" ] || return 0
     [ "$(have_in "trojan" "$port")" -gt 0 ] && return 0
-    jq --argjson port "$port" '
+    jq --argjson port "$port" --arg listen "$LISTEN_ADDR" '
       .inbounds += [ {
-        tag: "TROJAN TCP (auto)", listen: "0.0.0.0", port: $port, protocol: "trojan",
+        tag: "TROJAN TCP (auto)", listen: $listen, port: $port, protocol: "trojan",
         settings: { clients: [] },
         streamSettings: { network: "tcp" },
         sniffing: { enabled: true, destOverride: ["http","tls","quic"] }
-      } ]' /tmp/core.json > /tmp/core.json.new && mv /tmp/core.json.new /tmp/core.json; }
+      } ]' /tmp/core.json > /tmp/core.json.new && mv /tmp/core.json.new /tmp/core.json
+    configured+=("TROJAN:$port")
+  }
 
   add_ss2022(){ local port="$1" psk="$2"; [ -n "$port" ] || return 0
     [ -n "$psk" ] || { info "SS2022_PORT задан, но нет SS2022_PSK — пропускаю"; return 0; }
     [ "$(have_in "shadowsocks" "$port")" -gt 0 ] && return 0
-    jq --argjson port "$port" --arg psk "$psk" '
+    jq --argjson port "$port" --arg psk "$psk" --arg listen "$LISTEN_ADDR" '
       .inbounds += [ {
-        tag: "SS2022 TCP/UDP (auto)", listen: "0.0.0.0", port: $port, protocol: "shadowsocks",
+        tag: "SS2022 TCP/UDP (auto)", listen: $listen, port: $port, protocol: "shadowsocks",
         settings: { method: "2022-blake3-chacha20-poly1305", password: $psk, network: "tcp,udp" },
         sniffing: { enabled: true, destOverride: ["http","tls","quic"] }
-      } ]' /tmp/core.json > /tmp/core.json.new && mv /tmp/core.json.new /tmp/core.json; }
+      } ]' /tmp/core.json > /tmp/core.json.new && mv /tmp/core.json.new /tmp/core.json
+    configured+=("SS2022:$port")
+  }
 
   add_ss_aead(){ local port="$1" pass="$2"; [ -n "$port" ] || return 0
     [ -n "$pass" ] || { info "SS_AEAD_PORT задан, но нет SS_AEAD_PASSWORD — пропускаю"; return 0; }
     [ "$(have_in "shadowsocks" "$port")" -gt 0 ] && return 0
-    jq --argjson port "$port" --arg pass "$pass" '
+    jq --argjson port "$port" --arg pass "$pass" --arg listen "$LISTEN_ADDR" '
       .inbounds += [ {
-        tag: "SS AEAD 2018 TCP/UDP (auto)", listen: "0.0.0.0", port: $port, protocol: "shadowsocks",
+        tag: "SS AEAD 2018 TCP/UDP (auto)", listen: $listen, port: $port, protocol: "shadowsocks",
         settings: { method: "chacha20-ietf-poly1305", password: $pass, network: "tcp,udp" },
         sniffing: { enabled: true, destOverride: ["http","tls","quic"] }
-      } ]' /tmp/core.json > /tmp/core.json.new && mv /tmp/core.json.new /tmp/core.json; }
+      } ]' /tmp/core.json > /tmp/core.json.new && mv /tmp/core.json.new /tmp/core.json
+    configured+=("SS_AEAD:$port")
+  }
 
   add_vless_tcp "$VLESS_PORT"
   add_vmess_tcp "$VMESS_PORT"
@@ -417,7 +432,11 @@ step4_add_inbounds(){
   HTTP=$($CURL_CMD -o /tmp/restart.json -w "%{http_code}" -X POST -H "$AUTH" "$BASE/api/core/restart" 2>/dev/null || true)
   [ "$HTTP" = "200" ] || { cat /tmp/restart.json; die "POST /api/core/restart (HTTP $HTTP)"; }
 
-  info "Инбаунды применены"
+  if [ ${#configured[@]} -gt 0 ]; then
+    info "Настроены протоколы: ${configured[*]}"
+  else
+    info "Не настроено ни одного протокола"
+  fi
   compose_up_force
 }
 
@@ -716,6 +735,9 @@ EOF
       -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
       "${SSH_USER}@${SSH_HOST}" 'bash -s' >/dev/null
   fi
+
+  # 5) Конфигурация inbound'ов на главной панели
+  step4_add_inbounds "$ADDRESS"
 
   echo 90 >&3
   echo "---- Проверка узла (docker ps) ----"
