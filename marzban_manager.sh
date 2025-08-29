@@ -127,7 +127,17 @@ ensure_host_network(){
 configure_stack_from_env(){
   [ -f "$ENV_FILE" ] || die "нет $ENV_FILE (сначала пункт 1)"
   ensure_host_network
-  local MODE; MODE="$(getv TLS_MODE)"; [ -n "$MODE" ] || die "TLS_MODE не задан"
+  local MODE
+  MODE="$(getv TLS_MODE)"
+  if [ -z "$MODE" ]; then
+    ensure_cmd dialog dialog
+    if ! MODE=$(dialog --clear --stdout --menu "Режим TLS:" 12 50 2 \
+        caddy "caddy" \
+        uvicorn "uvicorn" ); then
+      die "TLS_MODE не выбран"
+    fi
+    set_kv_force "$ENV_FILE" TLS_MODE "$MODE"
+  fi
 
   case "${MODE:-}" in
     caddy)
