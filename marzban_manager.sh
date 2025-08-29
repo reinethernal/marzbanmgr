@@ -461,8 +461,32 @@ HTML
   cat > "$TDIR/home/index.html" <<'HTML'
 <!doctype html><meta charset="utf-8"><title>Home</title><h1>Welcome to Marzban</h1>
 HTML
+  ensure_cmd jq jq
+  local JSON_BODY pair CURL_CMD BASE AUTH HTTP tmp
+  JSON_BODY=$(jq -n \
+    --arg v2d "$TDIR/v2ray/default.json" \
+    --arg v2s "$TDIR/v2ray/settings.json" \
+    --arg sbd "$TDIR/singbox/default.json" \
+    --arg sbs "$TDIR/singbox/settings.json" \
+    --arg cld "$TDIR/clash/default.yml" \
+    --arg muxd "$TDIR/mux/default.json" \
+    --arg sub "$TDIR/subscription/index.html" \
+    --arg home "$TDIR/home/index.html" \
+    '{templates:[{name:"v2ray_default",path:$v2d},{name:"v2ray_settings",path:$v2s},{name:"singbox_default",path:$sbd},{name:"singbox_settings",path:$sbs},{name:"clash_default",path:$cld},{name:"mux_default",path:$muxd},{name:"subscription_index",path:$sub},{name:"home_index",path:$home}]}'
+  )
   info "Шаблоны установлены → $TDIR"
   compose_up_relaxed
+  pair="$(get_token_with_admin)" || echo "Внимание: токен не получен — пропуск POST /api/template"
+  if [ -n "${pair:-}" ]; then
+    CURL_CMD="${pair%%|*}"; tmp="${pair#*|}"; BASE="${tmp%%|*}"; AUTH="${tmp#*|}"
+    ensure_cmd curl curl
+    HTTP=$($CURL_CMD -sS -o /tmp/post_template.log -w '%{http_code}' -H "$AUTH" -H 'Content-Type: application/json' --data "$JSON_BODY" "$BASE/api/template" 2>/dev/null || true)
+    if [ "$HTTP" = "409" ]; then
+      info "шаблоны уже существуют (409)"
+    elif [ "$HTTP" -lt 200 ] || [ "$HTTP" -ge 300 ]; then
+      echo "Внимание: POST /api/template → HTTP $HTTP"
+    fi
+  fi
   local DOMAIN URL CODE
   DOMAIN="$(getv DOMAIN)"
   if [ -n "$DOMAIN" ]; then
