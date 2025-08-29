@@ -637,16 +637,17 @@ EOF
 # ---------- Меню ----------
 main_menu(){
   normalize_file "$ENV_VARS_PATH"
+  ensure_cmd dialog dialog
   while true; do
-    echo "1) Установить/переустановить Marzban"
-    echo "2) Применить env.vars в /opt/marzban/.env"
-    echo "3) Добавить inbound’ы (только объявленные)"
-    echo "4) Установить валидные шаблоны подписок (sing-box/v2ray/clash/mux)"
-    echo "5) Пересоздать стек (caddy|uvicorn)"
-    echo "6) Показать статус"
-    echo "7) Добавить ноду Marzban"
-    echo "0) Выход"
-    read -r -p "Выбор: " choice
+    choice=$(dialog --clear --stdout --menu "Marzban Manager" 20 70 10 \
+      1 "Установить/переустановить Marzban" \
+      2 "Применить env.vars в /opt/marzban/.env" \
+      3 "Добавить inbound’ы (только объявленные)" \
+      4 "Установить валидные шаблоны подписок (sing-box/v2ray/clash/mux)" \
+      5 "Пересоздать стек (caddy|uvicorn)" \
+      6 "Показать статус" \
+      7 "Добавить ноду Marzban" \
+      0 "Выход") || break
     case "$choice" in
       1) step1_install ;;
       2) step2_apply_env ;;
@@ -655,10 +656,8 @@ main_menu(){
       5) step3_force_recreate ;;
       6) status ;;
       7) step7_add_node ;;
-      0) exit 0 ;;
-      *) echo "Неверный выбор" ;;
+      0) break ;;
     esac
-    echo
   done
 }
 
